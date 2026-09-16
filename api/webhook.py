@@ -35,18 +35,16 @@ def webhook():
 def procesar_mensaje_natural(message):
   texto = message.text.strip()
 
-  # Ignorar mensajes que no tengan formato de fecha
   if not re.search(r"\d{2}/\d{2}/\d{2,4}", texto):
     return
 
   try:
-    # Extraer la primera fecha del mensaje para uso general
     match_fecha = re.search(r"(\d{2}/\d{2}/\d{2,4})", texto)
     fecha = match_fecha.group(1) if match_fecha else datetime.now().strftime("%d/%m/%y")
     texto_limpio = re.sub(r"^\d{2}/\d{2}/\d{2,4}:?", "", texto).strip()
 
     # -------------------------------------------------------------
-    # CASO 1: REGISTRO DE TARJETAS (Soporta múltiples líneas)
+    # CASO 1: REGISTRO DE TARJETAS (Va para la pestaña "Tarjetas")
     # -------------------------------------------------------------
     if "tarjeta" in texto_limpio.lower() or "amarilla" in texto_limpio.lower() or "roja" in texto_limpio.lower():
       
@@ -70,6 +68,12 @@ def procesar_mensaje_natural(message):
         amarilla = 1 if "amarilla" in lin_limpia.lower() else 0
         roja = 1 if "roja" in lin_limpia.lower() else 0
 
+        # Calcular multa fija según el tipo de tarjeta (Amarilla = 5000, Roja = 10000)
+        if roja > 0 and amarilla == 0:
+          total_multa = 10000
+        else:
+          total_multa = 5000  # Por defecto amarilla o si tiene ambas
+
         # Limpiar palabras clave para aislar nombres y equipo
         t_limpia = re.sub(r"amarilla|roja|tarjeta|a\s+|de\s+", "", lin_limpia, flags=re.IGNORECASE)
         palabras = [p for p in t_limpia.split() if not re.search(r"\d{2}/\d{2}/\d{2,4}", p)]
@@ -82,9 +86,6 @@ def procesar_mensaje_natural(message):
           jugador = " ".join(palabras[:-1]).title()
         elif len(palabras) == 1:
           jugador = palabras[0].title()
-
-        numeros = [float(p) for p in lin_limpia.split() if p.isdigit()]
-        total_multa = numeros[-1] if numeros and numeros[-1] > 100 else 5000
 
         payload = {
             "tipo": "tarjeta",
@@ -103,13 +104,13 @@ def procesar_mensaje_natural(message):
           errores += 1
 
       if tarjetas_registradas > 0:
-        bot.reply_to(message, f"✅ ¡Se registraron {tarjetas_registradas} tarjeta(s) en Google Sheets! 📊")
+        bot.reply_to(message, f"🟨🟥 ¡Se registraron {tarjetas_registradas} tarjeta(s) en la pestaña Tarjetas! 📊")
       else:
         bot.reply_to(message, "❌ No se pudo registrar ninguna tarjeta. Revisa el formato.")
       return
 
     # -------------------------------------------------------------
-    # CASO 2: REGISTRO DE PARTIDO / ARBITRAJE (Con pagos mixtos y descuento fijo)
+    # CASO 2: REGISTRO DE PARTIDO / ARBITRAJE (Va para la pestaña "Arbitraje")
     # -------------------------------------------------------------
     if "contra" in texto_limpio.lower() or "vs" in texto_limpio.lower():
       partes = re.split(r"\s+contra\s+|\s+vs\s+", texto_limpio, flags=re.IGNORECASE)
@@ -143,11 +144,7 @@ def procesar_mensaje_natural(message):
       efectivo_total = ef_local + ef_vis
       nequi_total = nq_local + nq_vis
       ingreso_total = efectivo_total + nequi_total
-      
-      # Descuento fijo por partido (Pago a la mesa)
       descuento = 70000 
-      
-      # Caja Neta = Ingreso Total - Descuento Fijo
       caja_neta = ingreso_total - descuento
 
       payload = {
@@ -168,7 +165,7 @@ def procesar_mensaje_natural(message):
       if response.status_code == 200:
         bot.reply_to(
             message,
-            f"✅ ¡Arbitraje registrado en Google Sheet! 📊\n"
+            f"✅ ¡Arbitraje registrado en pestaña Arbitraje! 📊\n"
             f"📅 {fecha} | ⚽ {equipo_local} vs {equipo_vis}\n"
             f"💵 Efectivo: ${efectivo_total:,.0f} | 📱 Nequi: ${nequi_total:,.0f}\n"
             f"🏷️ Descuento Mesa: ${descuento:,.0f}\n"
