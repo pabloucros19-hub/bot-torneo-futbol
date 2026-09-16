@@ -1,3 +1,4 @@
+from datetime import datetime
 import os
 import requests
 import telebot
@@ -14,17 +15,16 @@ TURSO_TOKEN = os.getenv("TURSO_AUTH_TOKEN")
 
 
 def ejecutar_query_turso(sql_query, params=None):
-  """Función auxiliar para enviar consultas a Turso desde Vercel sin librerías pesadas"""
+  """Ejecuta consultas en Turso mediante la API REST"""
   if not TURSO_URL or not TURSO_TOKEN:
+    print("Faltan credenciales de Turso")
     return None
 
-  # Turso acepta consultas HTTP SQL fácilmente mediante su API REST /v2/pipeline
   url = f"{TURSO_URL.replace('libsql://', 'https://')}/v2/pipeline"
   headers = {
       "Authorization": f"Bearer {TURSO_TOKEN}",
       "Content-Type": "application/json",
   }
-
   payload = {
       "requests": [{"type": "execute", "stmt": {"sql": sql_query, "args": params or []}}]
   }
@@ -39,7 +39,7 @@ def ejecutar_query_turso(sql_query, params=None):
 
 @app.route("/", methods=["GET"])
 def index():
-  return "Bot de Torneo de Fútbol activo correctamente en la nube", 200
+  return "Bot de arbitraje activo en la nube", 200
 
 
 @app.route("/api/webhook", methods=["POST"])
@@ -47,36 +47,90 @@ def webhook():
   if request.headers.get("content-type") == "application/json":
     json_string = request.get_data().decode("utf-8")
     update = telebot.types.Update.de_json(json_string)
-
     try:
       bot.process_new_updates([update])
     except Exception as e:
       print(f"Error procesando update: {e}")
-
     return "OK", 200
   else:
     return "Forbidden", 403
 
 
-# Manejador de ejemplo para cuando tus compañeros escriban en Telegram
-@bot.message_handler(commands=["gol", "resultado"])
-def registrar_accion(message):
-  # Aquí puedes capturar lo que escriban tus amigos (ej: /gol EquipoA EquipoB)
-  texto_usuario = message.text
+# Comando exacto para registrar el partido/arbitraje tal como lo haces localmente
+# Ejemplo de mensaje esperado de tus compañeros:
+# /arbitraje Argentina 80000 60000 Usa 60000 60000 70000
+# (O el formato exacto que ya maneje tu script local)
+@bot.message_handler(commands=["arbitraje", "partido"])
+def registrar_arbitraje(message):
+  try:
+    # Separamos los argumentos que envían en el mensaje de Telegram
+    text_parts = message.text.split()
+    if len(text_parts) < 8:
+      bot.reply_to(
+          message,
+          "⚠️ Formato incorrecto. Usa:\n`/arbitraje [Local] [PagoLocal]"
+          " [Visitante] [PagoVisita] [Efectivo] [Nequi] [Descuento]`",
+      )
+      return
 
-  # Ejemplo de guardado en Turso (puedes crear tu tabla previamente en Turso)
-  # ejecutar_query_turso("INSERT INTO partidos (mensaje, usuario) VALUES (?, ?)", [texto_usuario, message.from_user.username])
+    fecha_hoy = datetime.now().strftime("%Y-%m-%d")
+    equipo_local = text_parts[1]
+    pago_local = float(text_parts[2])
+    equipo_vis = text_parts[3]
+    pago_visita = float(text_parts[4])
+    efectivo_total = float(text_parts[5])
+    nequi_total = float(text_parts[6])
+    descuento = float(text_parts[7])
 
-  bot.reply_to(
-      message,
-      f"¡Dato registrado en la nube con éxito! ⚽ Procesé: {texto_usuario}",
-  )
+    # Aplicamos exactamente la misma lógica matemática de tu Excel
+    ingreso_total = efectivo_total + nequi_total
+    caja_neta = ingreso_total - descuento
+
+    # Guardamos en la base de datos de Turso
+    query = """
+            INSERT INTO partidos_arbitraje 
+            (fecha, equipo_local, pago_local, equipo_vis, pago_visita, efectivo_total, nequi_total, ingreso_total, descuento, caja_neta) 
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        """
+    params = [
+        fecha_hoy,
+        equipo_local,
+        pago_local,
+        equipo_vis,
+        pago_visita,
+        efectivo_total,
+        nequi_total,
+        ingreso_total,
+        descuento,
+        caja_neta,
+    ]
+
+    resultado = ejecutar_query_turso(query, params)
+
+    if resultado:
+      bot.reply_to(
+          message,
+          f"✅ Partido registrado con éxito en la nube:\n"
+          f"⚽ {equipo_local} ({pago_local}) vs {equipo_vis} ({pago_visita})\n"
+          f"💵 Efectivo: ${efectivo_total:,.0f} | Nequi: ${nequi_total:,.0f}\n"
+          f"📊 Ingreso Total: ${ingreso_total:,.0f}\n"
+          f"📉 Descuento: ${descuento:,.0f}\n"
+          f"💰 Caja Neta: ${caja_neta:,.0f}",
+      )
+    else:
+      bot.reply_to(
+          message,
+          "❌ Hubo un error al guardar los datos en la base de datos de Turso.",
+      )
+
+  except Exception as e:
+    bot.reply_to(message, f"❌ Error procesando el registro: {e}")
 
 
 @bot.message_handler(func=lambda message: True)
-def echo_all(message):
+def default_response(message):
   bot.reply_to(
       message,
-      "¡Hola! El bot del torneo está activo 24/7 en la nube. Usa los comandos"
-      " habilitados para actualizar datos.",
+      "Bot de arbitraje en línea activo. Usa /arbitraje para registrar los"
+      " pagos.",
   )
