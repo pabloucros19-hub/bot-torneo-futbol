@@ -35,98 +35,113 @@ def webhook():
 def procesar_mensaje_natural(message):
   texto = message.text.strip()
 
-  # Ignorar mensajes que no tengan formato de registro
-  if not re.search(r"\d{2}/\d{2}/\d{2}", texto):
+  # Ignorar mensajes que no tengan formato de fecha
+  if not re.search(r"\d{2}/\d{2}/\d{2,4}", texto):
     return
 
   try:
-    # Extraer fecha
-    match_fecha = re.search(r"(\d{2}/\d{2}/\d{2})", texto)
+    # Extraer la primera fecha del mensaje para uso general
+    match_fecha = re.search(r"(\d{2}/\d{2}/\d{2,4})", texto)
     fecha = match_fecha.group(1) if match_fecha else datetime.now().strftime("%d/%m/%y")
-    texto_limpio = re.sub(r"^\d{2}/\d{2}/\d{2}:?", "", texto).strip()
+    texto_limpio = re.sub(r"^\d{2}/\d{2}/\d{2,4}:?", "", texto).strip()
 
     # -------------------------------------------------------------
-    # CASO 1: REGISTRO DE TARJETAS (Ej: "Francia Jhonatan amarilla 1 5000" o similar)
+    # CASO 1: REGISTRO DE TARJETAS (Soporta múltiples líneas)
     # -------------------------------------------------------------
     if "tarjeta" in texto_limpio.lower() or "amarilla" in texto_limpio.lower() or "roja" in texto_limpio.lower():
-      # Limpiar palabra tarjeta si la trae
-      limpio_t = re.sub(r"tarjeta", "", texto_limpio, flags=re.IGNORECASE).strip()
-      partes = limpio_t.split()
       
-      if len(partes) < 3:
-        bot.reply_to(message, "⚠️ Formato de tarjeta incompleto. Ejemplo: `15/09/26 Francia Jhonatan amarilla 1 5000`")
-        return
+      lineas = texto.split("\n")
+      tarjetas_registradas = 0
+      errores = 0
 
-      equipo = partes[0]
-      jugador = partes[1]
-      
-      # Buscar tipo de tarjeta y cantidad/multa
-      amarilla = 1 if "amarilla" in texto_limpio.lower() else 0
-      roja = 1 if "roja" in texto_limpio.lower() else 0
-      
-      # Extraer valor numérico de multa si viene al final
-      numeros = [float(p) for p in partes if p.isdigit()]
-      total_multa = numeros[-1] if numeros else 5000 # Valor por defecto o el que escribas
+      for linea in lineas:
+        linea = linea.strip()
+        if not linea:
+          continue
+        
+        match_f_linea = re.search(r"(\d{2}/\d{2}/\d{2,4})", linea)
+        fecha_linea = match_f_linea.group(1) if match_f_linea else fecha
+        
+        lin_limpia = re.sub(r"^\d{2}/\d{2}/\d{2,4}:?", "", linea).strip()
 
-      payload = {
-          "tipo": "tarjeta",
-          "fecha": fecha,
-          "equipo": equipo,
-          "jugador": jugador,
-          "amarilla": amarilla,
-          "roja": roja,
-          "total_multa": total_multa
-      }
+        if "amarilla" not in lin_limpia.lower() and "roja" not in lin_limpia.lower() and "tarjeta" not in lin_limpia.lower():
+          continue
 
-      response = requests.post(GOOGLE_SCRIPT_URL, json=payload)
-      if response.status_code == 200:
-        bot.reply_to(message, f"🟨🟥 ¡Tarjeta registrada en Google Sheets!\n📅 {fecha} | ⚽ {equipo} - 👤 {jugador}\n💵 Multa: ${total_multa:,.0f}")
+        amarilla = 1 if "amarilla" in lin_limpia.lower() else 0
+        roja = 1 if "roja" in lin_limpia.lower() else 0
+
+        # Limpiar palabras clave para aislar nombres y equipo
+        t_limpia = re.sub(r"amarilla|roja|tarjeta|a\s+|de\s+", "", lin_limpia, flags=re.IGNORECASE)
+        palabras = [p for p in t_limpia.split() if not re.search(r"\d{2}/\d{2}/\d{2,4}", p)]
+
+        equipo = "Desconocido"
+        jugador = "Desconocido"
+        
+        if len(palabras) >= 2:
+          equipo = palabras[-1].capitalize()
+          jugador = " ".join(palabras[:-1]).title()
+        elif len(palabras) == 1:
+          jugador = palabras[0].title()
+
+        numeros = [float(p) for p in lin_limpia.split() if p.isdigit()]
+        total_multa = numeros[-1] if numeros and numeros[-1] > 100 else 5000
+
+        payload = {
+            "tipo": "tarjeta",
+            "fecha": fecha_linea,
+            "equipo": equipo,
+            "jugador": jugador,
+            "amarilla": amarilla,
+            "roja": roja,
+            "total_multa": total_multa
+        }
+
+        response = requests.post(GOOGLE_SCRIPT_URL, json=payload)
+        if response.status_code == 200:
+          tarjetas_registradas += 1
+        else:
+          errores += 1
+
+      if tarjetas_registradas > 0:
+        bot.reply_to(message, f"✅ ¡Se registraron {tarjetas_registradas} tarjeta(s) en Google Sheets! 📊")
       else:
-        bot.reply_to(message, "❌ Error al guardar la tarjeta en la hoja.")
+        bot.reply_to(message, "❌ No se pudo registrar ninguna tarjeta. Revisa el formato.")
       return
 
     # -------------------------------------------------------------
-    # CASO 2: REGISTRO DE PARTIDO / ARBITRAJE (Tu formato habitual)
+    # CASO 2: REGISTRO DE PARTIDO / ARBITRAJE (Con montos mixtos)
     # -------------------------------------------------------------
     if "contra" in texto_limpio.lower() or "vs" in texto_limpio.lower():
       partes = re.split(r"\s+contra\s+|\s+vs\s+", texto_limpio, flags=re.IGNORECASE)
       if len(partes) < 2:
-        bot.reply_to(message, "⚠️ Formato de partido incorrecto. Usa: `15/09/26: Francia 60000 nequi contra Brasil 60000 nequi`")
+        bot.reply_to(message, "⚠️ Formato incorrecto. Ejemplo: `15/09/2026: Francia 30000 nequi 30000 efectivo contra Brasil 20000 nequi`")
         return
 
-      # Local
-      local_raw = partes[0].strip()
-      match_local = re.search(r"^(.*?)\s+(\d+)", local_raw, re.IGNORECASE)
-      if match_local:
-        equipo_local = match_local.group(1).strip()
-        pago_local = float(match_local.group(2))
-        metodo_local = "nequi" if "nequi" in local_raw.lower() else "efectivo"
-      else:
-        bot.reply_to(message, f"⚠️ Revisa el equipo local: '{local_raw}'")
-        return
+      def extraer_valores_equipo(texto_equipo):
+        match_nombre = re.search(r"^(.*?)\s+\d+", texto_equipo)
+        nombre = match_nombre.group(1).strip() if match_nombre else texto_equipo.strip()
+        patrones = re.findall(r"(\d+)\s*(efectivo|nequi)?", texto_equipo, flags=re.IGNORECASE)
+        
+        efectivo_eq = 0
+        nequi_eq = 0
+        pago_total_eq = 0
+        
+        for monto_str, metodo in patrones:
+          monto = float(monto_str)
+          pago_total_eq += monto
+          met = metodo.lower() if metodo else "efectivo"
+          if met == "nequi":
+            nequi_eq += monto
+          else:
+            efectivo_eq += monto
+            
+        return nombre, pago_total_eq, efectivo_eq, nequi_eq
 
-      # Visitante
-      visita_raw = partes[1].strip()
-      match_visita = re.search(r"^(.*?)\s+(\d+)", visita_raw, re.IGNORECASE)
-      if match_visita:
-        equipo_vis = match_visita.group(1).strip()
-        pago_visita = float(match_visita.group(2))
-        metodo_visita = "nequi" if "nequi" in visita_raw.lower() else "efectivo"
-      else:
-        bot.reply_to(message, f"⚠️ Revisa el equipo visitante: '{visita_raw}'")
-        return
+      equipo_local, pago_local, ef_local, nq_local = extraer_valores_equipo(partes[0].strip())
+      equipo_vis, pago_visita, ef_vis, nq_vis = extraer_valores_equipo(partes[1].strip())
 
-      # Cálculos
-      efectivo_total = (pago_local if metodo_local == "efectivo" else 0) + (pago_visita if metodo_visita == "nequi" == False and metodo_visita == "efectivo" else 0) # Simplificado abajo:
-      
-      efectivo_total = 0
-      nequi_total = 0
-      if metodo_local == "nequi": nequi_total += pago_local
-      else: efectivo_total += pago_local
-      
-      if metodo_visita == "nequi": nequi_total += pago_visita
-      else: efectivo_total += pago_visita
-
+      efectivo_total = ef_local + ef_vis
+      nequi_total = nq_local + nq_vis
       ingreso_total = efectivo_total + nequi_total
       descuento = 0
       caja_neta = ingreso_total - descuento
@@ -156,6 +171,7 @@ def procesar_mensaje_natural(message):
         )
       else:
         bot.reply_to(message, "❌ Error al guardar el arbitraje.")
+      return
 
   except Exception as e:
     bot.reply_to(message, f"❌ Error procesando el mensaje: {e}")
