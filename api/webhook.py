@@ -9,37 +9,13 @@ bot = telebot.TeleBot(TOKEN, threaded=False)
 
 app = Flask(__name__)
 
-# Credenciales de Turso (Configuradas en Vercel)
-TURSO_URL = os.getenv("TURSO_DATABASE_URL")
-TURSO_TOKEN = os.getenv("TURSO_AUTH_TOKEN")
-
-
-def ejecutar_query_turso(sql_query, params=None):
-  """Ejecuta consultas en Turso mediante la API REST"""
-  if not TURSO_URL or not TURSO_TOKEN:
-    print("Faltan credenciales de Turso")
-    return None
-
-  url = f"{TURSO_URL.replace('libsql://', 'https://')}/v2/pipeline"
-  headers = {
-      "Authorization": f"Bearer {TURSO_TOKEN}",
-      "Content-Type": "application/json",
-  }
-  payload = {
-      "requests": [{"type": "execute", "stmt": {"sql": sql_query, "args": params or []}}]
-  }
-
-  try:
-    response = requests.post(url, json=payload, headers=headers)
-    return response.json()
-  except Exception as e:
-    print(f"Error conectando a Turso: {e}")
-    return None
+# URL del Apps Script que pegaste en Vercel
+GOOGLE_SCRIPT_URL = os.getenv("GOOGLE_SCRIPT_URL")
 
 
 @app.route("/", methods=["GET"])
 def index():
-  return "Bot de arbitraje activo en la nube", 200
+  return "Bot de arbitraje con Google Sheets activo", 200
 
 
 @app.route("/api/webhook", methods=["POST"])
@@ -56,14 +32,11 @@ def webhook():
     return "Forbidden", 403
 
 
-# Comando exacto para registrar el partido/arbitraje tal como lo haces localmente
-# Ejemplo de mensaje esperado de tus compañeros:
-# /arbitraje Argentina 80000 60000 Usa 60000 60000 70000
-# (O el formato exacto que ya maneje tu script local)
+# Comando para registrar el partido desde Telegram
+# Ejemplo: /arbitraje Argentina 80000 Usa 60000 130000 10000 70000
 @bot.message_handler(commands=["arbitraje", "partido"])
 def registrar_arbitraje(message):
   try:
-    # Separamos los argumentos que envían en el mensaje de Telegram
     text_parts = message.text.split()
     if len(text_parts) < 8:
       bot.reply_to(
@@ -82,46 +55,43 @@ def registrar_arbitraje(message):
     nequi_total = float(text_parts[6])
     descuento = float(text_parts[7])
 
-    # Aplicamos exactamente la misma lógica matemática de tu Excel
+    # Cálculos idénticos a los de tu Excel
     ingreso_total = efectivo_total + nequi_total
     caja_neta = ingreso_total - descuento
 
-    # Guardamos en la base de datos de Turso
-    query = """
-            INSERT INTO partidos_arbitraje 
-            (fecha, equipo_local, pago_local, equipo_vis, pago_visita, efectivo_total, nequi_total, ingreso_total, descuento, caja_neta) 
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-        """
-    params = [
-        fecha_hoy,
-        equipo_local,
-        pago_local,
-        equipo_vis,
-        pago_visita,
-        efectivo_total,
-        nequi_total,
-        ingreso_total,
-        descuento,
-        caja_neta,
-    ]
+    # Datos que enviaremos al Script de Google
+    payload = {
+        "fecha": fecha_hoy,
+        "equipo_local": equipo_local,
+        "pago_local": pago_local,
+        "equipo_vis": equipo_vis,
+        "pago_visita": pago_visita,
+        "efectivo_total": efectivo_total,
+        "nequi_total": nequi_total,
+        "ingreso_total": ingreso_total,
+        "descuento": descuento,
+        "caja_neta": caja_neta,
+    }
 
-    resultado = ejecutar_query_turso(query, params)
+    if not GOOGLE_SCRIPT_URL:
+      bot.reply_to(
+          message, "❌ Error: Falta configurar GOOGLE_SCRIPT_URL en Vercel."
+      )
+      return
 
-    if resultado:
+    # Enviamos los datos mediante una petición HTTP POST al Script de Google
+    response = requests.post(GOOGLE_SCRIPT_URL, json=payload)
+
+    if response.status_code == 200:
       bot.reply_to(
           message,
-          f"✅ Partido registrado con éxito en la nube:\n"
-          f"⚽ {equipo_local} ({pago_local}) vs {equipo_vis} ({pago_visita})\n"
+          f"✅ ¡Registrado en Google Sheets al instante! 📊\n"
+          f"⚽ {equipo_local} vs {equipo_vis}\n"
           f"💵 Efectivo: ${efectivo_total:,.0f} | Nequi: ${nequi_total:,.0f}\n"
-          f"📊 Ingreso Total: ${ingreso_total:,.0f}\n"
-          f"📉 Descuento: ${descuento:,.0f}\n"
           f"💰 Caja Neta: ${caja_neta:,.0f}",
       )
     else:
-      bot.reply_to(
-          message,
-          "❌ Hubo un error al guardar los datos en la base de datos de Turso.",
-      )
+      bot.reply_to(message, "❌ Error al comunicarse con la hoja de cálculo.")
 
   except Exception as e:
     bot.reply_to(message, f"❌ Error procesando el registro: {e}")
@@ -131,6 +101,5 @@ def registrar_arbitraje(message):
 def default_response(message):
   bot.reply_to(
       message,
-      "Bot de arbitraje en línea activo. Usa /arbitraje para registrar los"
-      " pagos.",
+      "Bot conectado a Google Sheets. Usa /arbitraje para registrar los datos.",
   )
