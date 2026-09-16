@@ -322,5 +322,4 @@ def main():
 if __name__ == '__main__':
     main()
 
-# Instancia expuesta para que Vercel la detecte automáticamente
-app = get_application()
+
