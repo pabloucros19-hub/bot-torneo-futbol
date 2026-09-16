@@ -3,3 +3,5 @@ openpyxl
 google-auth
 google-auth-oauthlib
 google-api-python-client
+pyTelegramBotAPI==4.14.0
+Flask==3.0.2
