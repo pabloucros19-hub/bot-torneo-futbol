@@ -1,37 +1,25 @@
-from http.server import BaseHTTPRequestHandler
-import json
-import asyncio
-from telegram import Update
-from bot import get_application
+import os
+import telebot
+from flask import Flask, request
 
-# Inicializar la aplicación de Telegram
-app = get_application()
+# Recuperamos el token de las variables de entorno de Vercel que acabamos de configurar
+TOKEN = os.getenv("TELEGRAM_TOKEN")
+bot = telebot.TeleBot(TOKEN)
 
-class handler(BaseHTTPRequestHandler):
-    def do_POST(self):
-        content_length = int(self.headers.get('Content-Length', 0))
-        post_data = self.rfile.read(content_length)
-        
-        try:
-            data = json.loads(post_data.decode('utf-8'))
-            update = Update.de_json(data, app.bot)
-            
-            async def process():
-                await app.initialize()
-                await app.process_update(update)
-                await app.shutdown()
+app = Flask(__name__)
 
-            asyncio.run(process())
-            
-            self.send_response(200)
-            self.end_headers()
-            self.wfile.write(b'OK')
-        except Exception as e:
-            self.send_response(500)
-            self.end_headers()
-            self.wfile.write(str(e).encode('utf-8'))
 
-    def do_GET(self):
-        self.send_response(200)
-        self.end_headers()
-        self.wfile.write(b'Bot de Torneo en ejecucion (Vercel Webhook Active)')
+@app.route("/", methods=["GET"])
+def index():
+  return "Bot de Torneo de Fútbol activo correctamente", 200
+
+
+@app.route("/api/webhook", methods=["POST"])
+def webhook():
+  if request.headers.get("content-type") == "application/json":
+    json_string = request.get_data().decode("utf-8")
+    update = telebot.types.Update.de_json(json_string)
+    bot.process_new_updates([update])
+    return "", 200
+  else:
+    return "Forbidden", 403
