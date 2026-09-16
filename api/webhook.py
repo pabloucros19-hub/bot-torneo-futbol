@@ -1,5 +1,115 @@
-# -------------------------------------------------------------
-    # CASO 2: REGISTRO DE PARTIDO / ARBITRAJE (Con descuento fijo de 70000)
+from datetime import datetime
+import os
+import re
+import requests
+import telebot
+from flask import Flask, request
+
+TOKEN = os.getenv("TELEGRAM_TOKEN")
+bot = telebot.TeleBot(TOKEN, threaded=False)
+
+app = Flask(__name__)
+GOOGLE_SCRIPT_URL = os.getenv("GOOGLE_SCRIPT_URL")
+
+
+@app.route("/", methods=["GET"])
+def index():
+  return "Bot de arbitraje y tarjetas activo.", 200
+
+
+@app.route("/api/webhook", methods=["POST"])
+def webhook():
+  if request.headers.get("content-type") == "application/json":
+    json_string = request.get_data().decode("utf-8")
+    update = telebot.types.Update.de_json(json_string)
+    try:
+      bot.process_new_updates([update])
+    except Exception as e:
+      print(f"Error procesando update: {e}")
+    return "OK", 200
+  else:
+    return "Forbidden", 403
+
+
+@bot.message_handler(func=lambda message: True)
+def procesar_mensaje_natural(message):
+  texto = message.text.strip()
+
+  # Ignorar mensajes que no tengan formato de fecha
+  if not re.search(r"\d{2}/\d{2}/\d{2,4}", texto):
+    return
+
+  try:
+    # Extraer la primera fecha del mensaje para uso general
+    match_fecha = re.search(r"(\d{2}/\d{2}/\d{2,4})", texto)
+    fecha = match_fecha.group(1) if match_fecha else datetime.now().strftime("%d/%m/%y")
+    texto_limpio = re.sub(r"^\d{2}/\d{2}/\d{2,4}:?", "", texto).strip()
+
+    # -------------------------------------------------------------
+    # CASO 1: REGISTRO DE TARJETAS (Soporta múltiples líneas)
+    # -------------------------------------------------------------
+    if "tarjeta" in texto_limpio.lower() or "amarilla" in texto_limpio.lower() or "roja" in texto_limpio.lower():
+      
+      lineas = texto.split("\n")
+      tarjetas_registradas = 0
+      errores = 0
+
+      for linea in lineas:
+        linea = linea.strip()
+        if not linea:
+          continue
+        
+        match_f_linea = re.search(r"(\d{2}/\d{2}/\d{2,4})", linea)
+        fecha_linea = match_f_linea.group(1) if match_f_linea else fecha
+        
+        lin_limpia = re.sub(r"^\d{2}/\d{2}/\d{2,4}:?", "", linea).strip()
+
+        if "amarilla" not in lin_limpia.lower() and "roja" not in lin_limpia.lower() and "tarjeta" not in lin_limpia.lower():
+          continue
+
+        amarilla = 1 if "amarilla" in lin_limpia.lower() else 0
+        roja = 1 if "roja" in lin_limpia.lower() else 0
+
+        # Limpiar palabras clave para aislar nombres y equipo
+        t_limpia = re.sub(r"amarilla|roja|tarjeta|a\s+|de\s+", "", lin_limpia, flags=re.IGNORECASE)
+        palabras = [p for p in t_limpia.split() if not re.search(r"\d{2}/\d{2}/\d{2,4}", p)]
+
+        equipo = "Desconocido"
+        jugador = "Desconocido"
+        
+        if len(palabras) >= 2:
+          equipo = palabras[-1].capitalize()
+          jugador = " ".join(palabras[:-1]).title()
+        elif len(palabras) == 1:
+          jugador = palabras[0].title()
+
+        numeros = [float(p) for p in lin_limpia.split() if p.isdigit()]
+        total_multa = numeros[-1] if numeros and numeros[-1] > 100 else 5000
+
+        payload = {
+            "tipo": "tarjeta",
+            "fecha": fecha_linea,
+            "equipo": equipo,
+            "jugador": jugador,
+            "amarilla": amarilla,
+            "roja": roja,
+            "total_multa": total_multa
+        }
+
+        response = requests.post(GOOGLE_SCRIPT_URL, json=payload)
+        if response.status_code == 200:
+          tarjetas_registradas += 1
+        else:
+          errores += 1
+
+      if tarjetas_registradas > 0:
+        bot.reply_to(message, f"✅ ¡Se registraron {tarjetas_registradas} tarjeta(s) en Google Sheets! 📊")
+      else:
+        bot.reply_to(message, "❌ No se pudo registrar ninguna tarjeta. Revisa el formato.")
+      return
+
+    # -------------------------------------------------------------
+    # CASO 2: REGISTRO DE PARTIDO / ARBITRAJE (Con pagos mixtos y descuento fijo)
     # -------------------------------------------------------------
     if "contra" in texto_limpio.lower() or "vs" in texto_limpio.lower():
       partes = re.split(r"\s+contra\s+|\s+vs\s+", texto_limpio, flags=re.IGNORECASE)
@@ -67,3 +177,6 @@
       else:
         bot.reply_to(message, "❌ Error al guardar el arbitraje.")
       return
+
+  except Exception as e:
+    bot.reply_to(message, f"❌ Error procesando el mensaje: {e}")
