@@ -10,6 +10,7 @@ bot = telebot.TeleBot(TOKEN, threaded=False)
 
 # Variable principal obligatoria para Vercel
 app = Flask(__name__)
+handler = app  # <--- Esto fuerza a Vercel a encontrar el manejador
 
 GOOGLE_SCRIPT_URL = os.getenv("GOOGLE_SCRIPT_URL")
 
