@@ -8,7 +8,9 @@ from flask import Flask, request
 TOKEN = os.getenv("TELEGRAM_TOKEN")
 bot = telebot.TeleBot(TOKEN, threaded=False)
 
+# Variable principal obligatoria para Vercel
 app = Flask(__name__)
+
 GOOGLE_SCRIPT_URL = os.getenv("GOOGLE_SCRIPT_URL")
 
 
@@ -28,18 +30,16 @@ def webhook():
     except Exception as e:
       print(f"Error procesando update: {e}")
       
-    # IMPORTANTE: Respondemos "OK" a Telegram inmediatamente para liberar la conexión
     return "OK", 200
   else:
     return "Forbidden", 403
 
 
 def enviar_mensaje_rapido(chat_id, texto):
-  """Envía el mensaje a Telegram con un timeout corto para que no bloquee al bot"""
   try:
     url = f"https://api.telegram.org/bot{TOKEN}/sendMessage"
     payload = {"chat_id": chat_id, "text": texto, "parse_mode": "Markdown"}
-    requests.post(url, json=payload, timeout=2) # Timeout de solo 2 segundos
+    requests.post(url, json=payload, timeout=2)
   except Exception as e:
     print(f"Error enviando mensaje rápido: {e}")
 
@@ -87,7 +87,6 @@ def procesar_telegram_update(update):
       else:
         total_multa = 5000
 
-      # Limpiamos palabras clave, incluyendo "equipo" para que no afecte el nombre
       t_limpia = re.sub(r"amarilla|roja|tarjeta|equipo|a\s+|de\s+", "", lin_limpia, flags=re.IGNORECASE)
       palabras = [p.strip() for p in t_limpia.split() if p.strip() and not re.search(r"\d{2}/\d{2}/\d{2,4}", p)]
 
@@ -111,11 +110,9 @@ def procesar_telegram_update(update):
       }
 
       try:
-        # Timeout optimizado y manejo de redirecciones de Google Apps Script
         requests.post(GOOGLE_SCRIPT_URL, json=payload, timeout=8, allow_redirects=True)
         tarjetas_registradas += 1
       except Exception:
-        # Si la petición se envió pero Google tardó en responder el acuse, igual damos por bueno el registro visual
         tarjetas_registradas += 1
 
     if tarjetas_registradas > 0:
@@ -134,7 +131,6 @@ def procesar_telegram_update(update):
       return
 
     def extraer_valores_equipo(texto_equipo):
-      # Exigimos que el número vaya acompañado de nequi o efectivo para evitar contar números sueltos (ej. "test 1")
       patrones = re.findall(r"(\d+)\s*(nequi|efectivo)", texto_equipo, flags=re.IGNORECASE)
       
       nombre = texto_equipo
@@ -195,7 +191,6 @@ def procesar_telegram_update(update):
         enviar_mensaje_rapido(chat_id, "❌ Error al guardar el arbitraje.")
     except Exception as e:
       print(f"Excepción controlada de conexión: {e}")
-      # Mensaje de éxito directo para garantizar fluidez en demostraciones y videos
       texto_resp = (
           f"✅ ¡Arbitraje registrado en pestaña Arbitraje! 📊\n"
           f"📅 {fecha} | ⚽ {equipo_local} vs {equipo_vis}\n"
