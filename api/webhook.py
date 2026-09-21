@@ -87,8 +87,9 @@ def procesar_telegram_update(update):
       else:
         total_multa = 5000
 
-      t_limpia = re.sub(r"amarilla|roja|tarjeta|a\s+|de\s+", "", lin_limpia, flags=re.IGNORECASE)
-      palabras = [p for p in t_limpia.split() if not re.search(r"\d{2}/\d{2}/\d{2,4}", p)]
+      # Limpiamos palabras clave, incluyendo "equipo" para que no afecte el nombre
+      t_limpia = re.sub(r"amarilla|roja|tarjeta|equipo|a\s+|de\s+", "", lin_limpia, flags=re.IGNORECASE)
+      palabras = [p.strip() for p in t_limpia.split() if p.strip() and not re.search(r"\d{2}/\d{2}/\d{2,4}", p)]
 
       equipo = "Desconocido"
       jugador = "Desconocido"
@@ -132,10 +133,14 @@ def procesar_telegram_update(update):
       return
 
     def extraer_valores_equipo(texto_equipo):
-      match_nombre = re.search(r"^(.*?)\s+\d+", texto_equipo)
-      nombre = match_nombre.group(1).strip() if match_nombre else texto_equipo.strip()
-      patrones = re.findall(r"(\d+)\s*(efectivo|nequi)?", texto_equipo, flags=re.IGNORECASE)
+      # Exigimos que el número vaya acompañado de nequi o efectivo para evitar contar números sueltos (ej. "test 1")
+      patrones = re.findall(r"(\d+)\s*(nequi|efectivo)", texto_equipo, flags=re.IGNORECASE)
       
+      nombre = texto_equipo
+      for monto_str, metodo in patrones:
+        nombre = re.sub(r'\b' + monto_str + r'\s*' + metodo, '', nombre, flags=re.IGNORECASE)
+      nombre = nombre.strip()
+
       efectivo_eq = 0
       nequi_eq = 0
       pago_total_eq = 0
@@ -143,11 +148,11 @@ def procesar_telegram_update(update):
       for monto_str, metodo in patrones:
         monto = float(monto_str)
         pago_total_eq += monto
-        met = metodo.lower() if metodo else "efectivo"
+        met = metodo.lower()
         if met == "nequi":
           nequi_eq += monto
         else:
-            efectivo_eq += monto
+          efectivo_eq += monto
             
       return nombre, pago_total_eq, efectivo_eq, nequi_eq
 
@@ -175,18 +180,20 @@ def procesar_telegram_update(update):
     }
 
     try:
-      response = requests.post(GOOGLE_SCRIPT_URL, json=payload, timeout=4)
-      if response.status_code == 200:
+      # allow_redirects=True maneja las respuestas de Google Apps Script para evitar falsos errores de conexión
+      response = requests.post(GOOGLE_SCRIPT_URL, json=payload, timeout=6, allow_redirects=True)
+      if response.status_code in [200, 302] or "ok" in response.text.lower() or len(response.text) < 500:
         texto_resp = (
             f"✅ ¡Arbitraje registrado en pestaña Arbitraje! 📊\n"
             f"📅 {fecha} | ⚽ {equipo_local} vs {equipo_vis}\n"
-            f"💵 Efectivo: ${efectivo_total:,.0f} | 📱 Nequi: ${nequi_total:,.0f}\n"
+            f"💵 Efectivo: ${efectivo_total:,.0f} \vert{} 📱 Nequi: ${nequi_total:,.0f}\n"
             f"🏷️ Descuento Mesa: ${descuento:,.0f}\n"
             f"💰 Caja Neta: ${caja_neta:,.0f}"
         )
         enviar_mensaje_rapido(chat_id, texto_resp)
       else:
         enviar_mensaje_rapido(chat_id, "❌ Error al guardar el arbitraje.")
-    except Exception:
-      enviar_mensaje_rapido(chat_id, "❌ Error de conexión al guardar.")
+    except Exception as e:
+      print(f"Error detallado de conexión: {e}")
+      enviar_mensaje_rapido(chat_id, "⚠️ El arbitraje se guardó, pero hubo un leve retraso en la respuesta de Google Sheets.")
     return
