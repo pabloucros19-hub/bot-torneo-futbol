@@ -6,14 +6,12 @@ import telebot
 from flask import Flask, request
 
 TOKEN = os.getenv("TELEGRAM_TOKEN")
-bot = telebot.TeleBot(TOKEN, threaded=False)
-
-# Variable principal obligatoria para Vercel
-app = Flask(__name__)
-handler = app  # <--- Esto fuerza a Vercel a encontrar el manejador
-
 GOOGLE_SCRIPT_URL = os.getenv("GOOGLE_SCRIPT_URL")
 
+bot = telebot.TeleBot(TOKEN, threaded=False)
+
+app = Flask(__name__)
+handler = app  # IMPORTANTE: Requerido por Vercel para enrutar Flask
 
 @app.route("/", methods=["GET"])
 def index():
@@ -22,22 +20,27 @@ def index():
 
 @app.route("/api/webhook", methods=["POST"])
 def webhook():
-    if "application/json" in request.headers.get("content-type", ""):
+    if request.headers.get("content-type") == "application/json":
         json_string = request.get_data().decode("utf-8")
         update = telebot.types.Update.de_json(json_string)
         
-        # Procesamos el mensaje en el bot de Telegram
-        bot.process_new_updates([update])
-        
+        try:
+            procesar_telegram_update(update)
+        except Exception as e:
+            print(f"Error procesando update: {e}")
+            
+        # IMPORTANTE: Respondemos "OK" a Telegram inmediatamente para liberar la conexión
         return "OK", 200
-    return "Invalid content type", 403
+    else:
+        return "Forbidden", 403
 
 
 def enviar_mensaje_rapido(chat_id, texto):
+    """Envía el mensaje a Telegram con un timeout corto para que no bloquee al bot"""
     try:
         url = f"https://api.telegram.org/bot{TOKEN}/sendMessage"
         payload = {"chat_id": chat_id, "text": texto, "parse_mode": "Markdown"}
-        requests.post(url, json=payload, timeout=2)
+        requests.post(url, json=payload, timeout=2) # Timeout de solo 2 segundos
     except Exception as e:
         print(f"Error enviando mensaje rápido: {e}")
 
@@ -49,6 +52,11 @@ def procesar_telegram_update(update):
     message = update.message
     texto = message.text.strip()
     chat_id = message.chat.id
+
+    # Permitir comandos básicos para verificar respuesta sin requerir fecha
+    if texto.startswith("/start") or texto.startswith("/help"):
+        enviar_mensaje_rapido(chat_id, "¡Bot de arbitraje y tarjetas activo y listo en Vercel! ⚽📊")
+        return
 
     if not re.search(r"\d{2}/\d{2}/\d{2,4}", texto):
         return
@@ -85,8 +93,8 @@ def procesar_telegram_update(update):
             else:
                 total_multa = 5000
 
-            t_limpia = re.sub(r"amarilla|roja|tarjeta|equipo|a\s+|de\s+", "", lin_limpia, flags=re.IGNORECASE)
-            palabras = [p.strip() for p in t_limpia.split() if p.strip() and not re.search(r"\d{2}/\d{2}/\d{2,4}", p)]
+            t_limpia = re.sub(r"amarilla|roja|tarjeta|a\s+|de\s+", "", lin_limpia, flags=re.IGNORECASE)
+            palabras = [p for p in t_limpia.split() if not re.search(r"\d{2}/\d{2}/\d{2,4}", p)]
 
             equipo = "Desconocido"
             jugador = "Desconocido"
@@ -108,10 +116,11 @@ def procesar_telegram_update(update):
             }
 
             try:
-                requests.post(GOOGLE_SCRIPT_URL, json=payload, timeout=8, allow_redirects=True)
-                tarjetas_registradas += 1
+                response = requests.post(GOOGLE_SCRIPT_URL, json=payload, timeout=4)
+                if response.status_code == 200:
+                    tarjetas_registradas += 1
             except Exception:
-                tarjetas_registradas += 1
+                pass
 
         if tarjetas_registradas > 0:
             enviar_mensaje_rapido(chat_id, f"🟨🟥 ¡Se registraron {tarjetas_registradas} tarjeta(s) en la pestaña Tarjetas! 📊")
@@ -129,13 +138,10 @@ def procesar_telegram_update(update):
             return
 
         def extraer_valores_equipo(texto_equipo):
-            patrones = re.findall(r"(\d+)\s*(nequi|efectivo)", texto_equipo, flags=re.IGNORECASE)
+            match_nombre = re.search(r"^(.*?)\s+\d+", texto_equipo)
+            nombre = match_nombre.group(1).strip() if match_nombre else texto_equipo.strip()
+            patrones = re.findall(r"(\d+)\s*(efectivo|nequi)?", texto_equipo, flags=re.IGNORECASE)
             
-            nombre = texto_equipo
-            for monto_str, metodo in patrones:
-                nombre = re.sub(r'\b' + monto_str + r'\s*' + metodo, '', nombre, flags=re.IGNORECASE)
-            nombre = nombre.strip()
-
             efectivo_eq = 0
             nequi_eq = 0
             pago_total_eq = 0
@@ -143,7 +149,7 @@ def procesar_telegram_update(update):
             for monto_str, metodo in patrones:
                 monto = float(monto_str)
                 pago_total_eq += monto
-                met = metodo.lower()
+                met = metodo.lower() if metodo else "efectivo"
                 if met == "nequi":
                     nequi_eq += monto
                 else:
@@ -175,8 +181,8 @@ def procesar_telegram_update(update):
         }
 
         try:
-            response = requests.post(GOOGLE_SCRIPT_URL, json=payload, timeout=8, allow_redirects=True)
-            if response.status_code in [200, 302] or "ok" in response.text.lower() or len(response.text) < 1000:
+            response = requests.post(GOOGLE_SCRIPT_URL, json=payload, timeout=4)
+            if response.status_code == 200:
                 texto_resp = (
                     f"✅ ¡Arbitraje registrado en pestaña Arbitraje! 📊\n"
                     f"📅 {fecha} | ⚽ {equipo_local} vs {equipo_vis}\n"
@@ -187,14 +193,10 @@ def procesar_telegram_update(update):
                 enviar_mensaje_rapido(chat_id, texto_resp)
             else:
                 enviar_mensaje_rapido(chat_id, "❌ Error al guardar el arbitraje.")
-        except Exception as e:
-            print(f"Excepción controlada de conexión: {e}")
-            texto_resp = (
-                f"✅ ¡Arbitraje registrado en pestaña Arbitraje! 📊\n"
-                f"📅 {fecha} | ⚽ {equipo_local} vs {equipo_vis}\n"
-                f"💵 Efectivo: ${efectivo_total:,.0f} \vert{} 📱 Nequi: ${nequi_total:,.0f}\n"
-                f"🏷️ Descuento Mesa: ${descuento:,.0f}\n"
-                f"💰 Caja Neta: ${caja_neta:,.0f}"
-            )
-            enviar_mensaje_rapido(chat_id, texto_resp)
+        except Exception:
+            enviar_mensaje_rapido(chat_id, "❌ Error de conexión al guardar.")
         return
+
+
+if __name__ == "__main__":
+    app.run(debug=True)
