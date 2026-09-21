@@ -22,18 +22,15 @@ def index():
 
 @app.route("/api/webhook", methods=["POST"])
 def webhook():
-    if request.headers.get("content-type") == "application/json":
+    if "application/json" in request.headers.get("content-type", ""):
         json_string = request.get_data().decode("utf-8")
         update = telebot.types.Update.de_json(json_string)
         
-        try:
-            procesar_telegram_update(update)
-        except Exception as e:
-            print(f"Error procesando update: {e}")
-            
+        # Procesamos el mensaje en el bot de Telegram
+        bot.process_new_updates([update])
+        
         return "OK", 200
-    else:
-        return "Forbidden", 403
+    return "Invalid content type", 403
 
 
 def enviar_mensaje_rapido(chat_id, texto):
