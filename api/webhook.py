@@ -61,7 +61,7 @@ def procesar_telegram_update(update):
 
   # -------------------------------------------------------------
   # CASO 1: REGISTRO DE TARJETAS
-  # ---------------------------------------------
+  # -------------------------------------------------------------
   if "tarjeta" in texto_limpio.lower() or "amarilla" in texto_limpio.lower() or "roja" in texto_limpio.lower():
     lineas = texto.split("\n")
     tarjetas_registradas = 0
@@ -187,7 +187,7 @@ def procesar_telegram_update(update):
         enviar_mensaje_rapido(chat_id, texto_resp)
       else:
         enviar_mensaje_rapido(chat_id, "❌ Error al guardar el arbitraje.")
-    except Exception as e:
-      # Registramos en los logs de Vercel pero evitamos el falso positivo molesto al usuario
-      print(f"Aviso menor de red o respuesta en arbitraje: {e}")
+    except Exception:
+      # Excepción segura sin formateo de variables que puedan bloquear el hilo
+      print("Aviso menor de red o respuesta en arbitraje.")
     return
