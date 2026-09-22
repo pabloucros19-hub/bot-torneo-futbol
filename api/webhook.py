@@ -147,8 +147,8 @@ def procesar_telegram_update(update):
         if met == "nequi":
           nequi_eq += monto
         else:
-          efectivo_eq += monto
-          
+            efectivo_eq += monto
+            
       return nombre, pago_total_eq, efectivo_eq, nequi_eq
 
     equipo_local, pago_local, ef_local, nq_local = extraer_valores_equipo(partes[0].strip())
@@ -180,7 +180,7 @@ def procesar_telegram_update(update):
         texto_resp = (
             f"✅ ¡Arbitraje registrado en pestaña Arbitraje! 📊\n"
             f"📅 {fecha} | ⚽ {equipo_local} vs {equipo_vis}\n"
-            f"💵 Efectivo: ${efectivo_total:,.0f} \vert{} 📱 Nequi: ${nequi_total:,.0f}\n"
+            f"💵 Efectivo: ${efectivo_total:,.0f} | 📱 Nequi: ${nequi_total:,.0f}\n"
             f"🏷️ Descuento Mesa: ${descuento:,.0f}\n"
             f"💰 Caja Neta: ${caja_neta:,.0f}"
         )
@@ -188,6 +188,5 @@ def procesar_telegram_update(update):
       else:
         enviar_mensaje_rapido(chat_id, "❌ Error al guardar el arbitraje.")
     except Exception:
-      # Excepción segura sin formateo de variables que puedan bloquear el hilo
-      print("Aviso menor de red o respuesta en arbitraje.")
+      enviar_mensaje_rapido(chat_id, "❌ Error de conexión al guardar.")
     return
