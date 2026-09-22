@@ -39,9 +39,11 @@ def enviar_mensaje_rapido(chat_id, texto):
   try:
     url = f"https://api.telegram.org/bot{TOKEN}/sendMessage"
     payload = {"chat_id": chat_id, "text": texto, "parse_mode": "Markdown"}
-    requests.post(url, json=payload, timeout=2) # Timeout de solo 2 segundos
+    response = requests.post(url, json=payload, timeout=2) # Timeout de solo 2 segundos
+    response.raise_for_status()
   except Exception as e:
     print(f"Error enviando mensaje rápido: {e}")
+    raise e # Relanzamos para que el bloque superior detecte el fallo de Telegram si ocurre
 
 
 def procesar_telegram_update(update):
@@ -113,13 +115,26 @@ def procesar_telegram_update(update):
         response = requests.post(GOOGLE_SCRIPT_URL, json=payload, timeout=4)
         if response.status_code == 200:
           tarjetas_registradas += 1
-      except Exception:
-        pass
+      except Exception as sheets_err:
+        print(f"Error real guardando tarjeta en Sheets: {sheets_err}")
 
     if tarjetas_registradas > 0:
-      enviar_mensaje_rapido(chat_id, f"🟨🟥 ¡Se registraron {tarjetas_registradas} tarjeta(s) en la pestaña Tarjetas! 📊")
+      texto_tarjetas = f"🟨🟥 ¡Se registraron {tarjetas_registradas} tarjeta(s) en la pestaña Tarjetas! 📊"
+      
+      # Intento seguro con Telegram para tarjetas
+      enviado_tg = False
+      for intento in range(2):
+        try:
+          enviar_mensaje_rapido(chat_id, texto_tarjetas)
+          enviado_tg = True
+          break
+        except Exception:
+          pass
+          
+      if not enviado_tg:
+        print(f"Advertencia: Tarjetas guardadas en Sheets, pero Telegram falló al confirmar.")
     else:
-      enviar_mensaje_rapido(chat_id, "❌ No se pudo registrar ninguna tarjeta. Revisa el formato.")
+      enviar_mensaje_rapido(chat_id, "❌ No se pudo registrar ninguna tarjeta en el servidor. Revisa el formato.")
     return
 
   # -------------------------------------------------------------
@@ -147,8 +162,8 @@ def procesar_telegram_update(update):
         if met == "nequi":
           nequi_eq += monto
         else:
-            efectivo_eq += monto
-            
+          efectivo_eq += monto
+          
       return nombre, pago_total_eq, efectivo_eq, nequi_eq
 
     equipo_local, pago_local, ef_local, nq_local = extraer_valores_equipo(partes[0].strip())
@@ -176,17 +191,37 @@ def procesar_telegram_update(update):
 
     try:
       response = requests.post(GOOGLE_SCRIPT_URL, json=payload, timeout=4)
+      
       if response.status_code == 200:
+        # 1. Guardado exitoso en Sheets, preparamos texto
         texto_resp = (
             f"✅ ¡Arbitraje registrado en pestaña Arbitraje! 📊\n"
             f"📅 {fecha} | ⚽ {equipo_local} vs {equipo_vis}\n"
-            f"💵 Efectivo: ${efectivo_total:,.0f} | 📱 Nequi: ${nequi_total:,.0f}\n"
+            f"💵 Efectivo: ${efectivo_total:,.0f} \vert{} 📱 Nequi: ${nequi_total:,.0f}\n"
             f"🏷️ Descuento Mesa: ${descuento:,.0f}\n"
             f"💰 Caja Neta: ${caja_neta:,.0f}"
         )
-        enviar_mensaje_rapido(chat_id, texto_resp)
+        
+        # 2. Intento de respuesta con Telegram (con reintento por si parpadea la red)
+        mensaje_enviado = False
+        for intento in range(2):
+          try:
+            enviar_mensaje_rapido(chat_id, texto_resp)
+            mensaje_enviado = True
+            break
+          except Exception as tg_err:
+            print(f"Intento {intento+1} fallido enviando a Telegram: {tg_err}")
+            
+        # Si Sheets guardó pero Telegram falló tras el reintento, avisamos de forma transparente
+        if not mensaje_enviado:
+          enviar_mensaje_rapido(chat_id, "⚠️ Tus datos se guardaron correctamente en Sheets, pero Telegram presentó fallas al mostrar la confirmación.")
+
       else:
-        enviar_mensaje_rapido(chat_id, "❌ Error al guardar el arbitraje.")
-    except Exception:
-      enviar_mensaje_rapido(chat_id, "❌ Error de conexión al guardar.")
+        # Fallo real de Google Sheets (distinto de 200)
+        enviar_mensaje_rapido(chat_id, "❌ Error al guardar el arbitraje en el servidor (Sheets respondió con error).")
+
+    except Exception as sheets_error:
+      # Timeout o error de red real con Google Sheets
+      print(f"Error crítico real de servidor/Sheets: {str(sheets_error)}")
+      enviar_mensaje_rapido(chat_id, "❌ Error de conexión al guardar en el servidor.")
     return
